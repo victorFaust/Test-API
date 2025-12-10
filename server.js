@@ -1,213 +1,128 @@
-require("dotenv").config();
-const express = require("express");
-const bcrypt = require("bcrypt");
-const jwt = require("jsonwebtoken");
-const helmet = require("helmet");
-const rateLimit = require("express-rate-limit");
-
+const express = require('express');
 const app = express();
+
 app.use(express.json());
-app.use(helmet());
 
-// ==========================
-// Security: Rate Limiting
-// ==========================
-app.use(
-  "/api/",
-  rateLimit({
-    windowMs: 15 * 60 * 1000,
-    max: 200,
-    standardHeaders: true,
-    legacyHeaders: false,
-  })
-);
-
-// ==========================
-// In-memory stores (demo)
-// ==========================
+// In-memory stores
 let users = [];
 let items = [];
 let userIdCounter = 1;
 let itemIdCounter = 1;
 
-// ==========================
-// Utility: Send clean errors
-// ==========================
-const sendError = (res, code, message) =>
-  res.status(code).json({ success: false, error: message });
-
-// ==========================
-// Auth Middleware (JWT)
-// ==========================
-function auth(req, res, next) {
-  const token = req.headers.authorization?.split(" ")[1];
-  if (!token) return sendError(res, 401, "Unauthorized");
-
-  try {
-    req.user = jwt.verify(token, process.env.JWT_SECRET);
-    next();
-  } catch {
-    return sendError(res, 401, "Invalid or expired token");
-  }
-}
-
-// ==========================
-// Validators
-// ==========================
-function validateRegister(body) {
-  if (!body.username || !body.password)
-    return "Username and password are required";
-
-  if (typeof body.username !== "string" || body.username.length < 3)
-    return "Username must be at least 3 characters";
-
-  if (body.password.length < 6)
-    return "Password must be at least 6 characters";
-
-  return null;
-}
-
-function validateLogin(body) {
-  if (!body.username || !body.password)
-    return "Username and password are required";
-  return null;
-}
-
-// ==========================
 // AUTH ENDPOINTS
-// ==========================
 
 // Register
-app.post("/api/register", async (req, res) => {
-  const error = validateRegister(req.body);
-  if (error) return sendError(res, 400, error);
-
+app.post('/api/register', (req, res) => {
   const { username, password, email } = req.body;
-
-  if (users.some((u) => u.username === username)) {
-    return sendError(res, 400, "Username already exists");
+  
+  if (!username || !password) {
+    return res.status(400).json({ error: 'Username and password required' });
   }
-
-  const hashed = await bcrypt.hash(password, 10);
-
+  
+  if (users.find(u => u.username === username)) {
+    return res.status(400).json({ error: 'Username already exists' });
+  }
+  
   const user = {
     id: userIdCounter++,
     username,
-    password: hashed,
-    email: email || null,
-    createdAt: new Date(),
+    password, 
+    email,
+    createdAt: new Date()
   };
-
+  
   users.push(user);
-
-  res.status(201).json({
-    success: true,
-    message: "User registered",
-    user: { id: user.id, username: user.username, email: user.email },
+  res.status(201).json({ 
+    id: user.id, 
+    username: user.username,
+    email: user.email 
   });
 });
 
 // Login
-app.post("/api/login", async (req, res) => {
-  const error = validateLogin(req.body);
-  if (error) return sendError(res, 400, error);
-
+app.post('/api/login', (req, res) => {
   const { username, password } = req.body;
-
-  const user = users.find((u) => u.username === username);
-  if (!user) return sendError(res, 401, "Invalid credentials");
-
-  const valid = await bcrypt.compare(password, user.password);
-  if (!valid) return sendError(res, 401, "Invalid credentials");
-
-  const token = jwt.sign(
-    { id: user.id, username: user.username },
-    process.env.JWT_SECRET,
-    { expiresIn: "1h" }
-  );
-
-  res.json({
-    success: true,
-    message: "Login successful",
-    token,
+  
+  const user = users.find(u => u.username === username && u.password === password);
+  
+  if (!user) {
+    return res.status(401).json({ error: 'Invalid credentials' });
+  }
+  
+  res.json({ 
+    message: 'Login successful',
+    userId: user.id,
+    username: user.username
   });
 });
 
-// ==========================
-// CRUD ENDPOINTS (Protected)
-// ==========================
+// CRUD ENDPOINTS
 
 // Create item
-app.post("/api/items", auth, (req, res) => {
+app.post('/api/items', (req, res) => {
   const { name, description, price } = req.body;
-
-  if (!name) return sendError(res, 400, "Item name is required");
-
+  
+  if (!name) {
+    return res.status(400).json({ error: 'Name is required' });
+  }
+  
   const item = {
     id: itemIdCounter++,
     name,
-    description: description || "",
+    description,
     price: price || 0,
-    createdAt: new Date(),
-    ownerId: req.user.id,
+    createdAt: new Date()
   };
-
+  
   items.push(item);
-
-  res.status(201).json({ success: true, item });
+  res.status(201).json(item);
 });
 
-// Get all items
-app.get("/api/items", auth, (req, res) => {
-  res.json({ success: true, items });
+// Read all items
+app.get('/api/items', (req, res) => {
+  res.json(items);
 });
 
-// Get item by ID
-app.get("/api/items/:id", auth, (req, res) => {
-  const item = items.find((i) => i.id === Number(req.params.id));
-  if (!item) return sendError(res, 404, "Item not found");
-
-  res.json({ success: true, item });
+// Read single item
+app.get('/api/items/:id', (req, res) => {
+  const item = items.find(i => i.id === parseInt(req.params.id));
+  
+  if (!item) {
+    return res.status(404).json({ error: 'Item not found' });
+  }
+  
+  res.json(item);
 });
 
 // Update item
-app.put("/api/items/:id", auth, (req, res) => {
-  const item = items.find((i) => i.id === Number(req.params.id));
-  if (!item) return sendError(res, 404, "Item not found");
-
+app.put('/api/items/:id', (req, res) => {
+  const item = items.find(i => i.id === parseInt(req.params.id));
+  
+  if (!item) {
+    return res.status(404).json({ error: 'Item not found' });
+  }
+  
   item.name = req.body.name || item.name;
   item.description = req.body.description || item.description;
-  item.price = req.body.price ?? item.price;
+  item.price = req.body.price !== undefined ? req.body.price : item.price;
   item.updatedAt = new Date();
-
-  res.json({ success: true, item });
+  
+  res.json(item);
 });
 
 // Delete item
-app.delete("/api/items/:id", auth, (req, res) => {
-  const index = items.findIndex((i) => i.id === Number(req.params.id));
-  if (index === -1) return sendError(res, 404, "Item not found");
-
+app.delete('/api/items/:id', (req, res) => {
+  const index = items.findIndex(i => i.id === parseInt(req.params.id));
+  
+  if (index === -1) {
+    return res.status(404).json({ error: 'Item not found' });
+  }
+  
   items.splice(index, 1);
-
-  res.json({ success: true, message: "Item deleted" });
+  res.json({ message: 'Item deleted successfully' });
 });
 
-// ==========================
-// Global Error Handler
-// ==========================
-app.use((err, req, res, next) => {
-  console.error("SERVER ERROR:", err);
-  sendError(res, 500, "Internal server error");
+const PORT = 3000;
+app.listen(PORT, () => {
+  console.log(`API running on http://localhost:${PORT}`);
 });
-
-// ==========================
-// Start Server
-// ==========================
-const PORT = process.env.PORT || 3000;
-if (!process.env.JWT_SECRET) {
-  console.warn("⚠️ WARNING: JWT_SECRET not set. Using insecure default.");
-}
-app.listen(PORT, () =>
-  console.log(`Secure API running at http://localhost:${PORT}`)
-);
