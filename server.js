@@ -50,7 +50,7 @@ app.post('/api/login', (req, res) => {
   }
   
   res.json({ 
-    message: 'Login successful',
+    message: 'Login successful now',
     userId: user.id,
     username: user.username
   });
